@@ -1,0 +1,574 @@
+---
+title: "Visualization of the Ames Data/Norbert"
+output: html_notebook
+---
+```{r}
+library(caret)
+library(GGally)
+library(treemap)
+library(tidyverse)
+library(AmesHousing)
+```
+```{r}
+head(ames)
+ames = format(ames,scientific=FALSE)
+Sale_Price <- 10 ^ (1:10)
+format(Sale_Price, scientific = FALSE)
+formatC(Sale_Price, digits = 0, format = "f")
+
+
+
+ames <- AmesHousing::make_ames()
+ggplot(ames, aes(Sale_Price)) +
+  geom_histogram()
+
+##Notes
+#Measures of location:the most common Sale_Price is around the low $100K. 
+#Measures of spread: Our Sale_Price ranges from near zero to over $700K. 
+#Asymmetry: Sale_Price is skewed right (a common issue with financial data). Depending on the analytic technique we may want to apply later on this suggests we will likely need to transform this variable. 
+##Outliers: It appears that there are some large values far from the other Sale_Price values. Whether these are outliers in the mathematical sense or outliers to be concerned about is another issue but for now we at least know they exist.
+##Gaps: We see a gap exists between Sale_Price values around $650K and $700K+. histogram()
+```
+
+
+```{r}
+p1 <- ggplot(ames, aes(Sale_Price)) +
+  geom_histogram(binwidth = 100000) +
+  ggtitle("Bin width = $100,000")
+p2 <- ggplot(ames, aes(Sale_Price)) +
+  geom_histogram(binwidth = 50000) +
+  ggtitle("Bin width = $50,000")
+p3 <- ggplot(ames, aes(Sale_Price)) +
+  geom_histogram(binwidth = 5000) +
+  ggtitle("Bin width = $5,000")
+p4 <- ggplot(ames, aes(Sale_Price)) +
+  geom_histogram(binwidth = 1000) +
+  ggtitle("Bin width = $1,000")
+gridExtra::grid.arrange(p1, p2, p3, p4, ncol = 2)
+
+##Overall, these histograms consistently show the most common income level to be right around $130,000
+```
+
+
+```{r}
+##assessing the applicability of a log transformation to the data (standerdization)
+##This is achieved by adding scale_x_log() to our ggplot visual
+
+
+ames %>%
+  count(cut_width (Sale_Price, width= 5000) %>%
+  arrange(desc(n))  
+```
+
+
+```{r}
+ggplot(ames, aes(Sale_Price)) +
+  geom_histogram(bins = 100) +
+  geom_vline(xintercept = c(150000, 170000), color = "red", lty = "dashed") +
+  scale_x_log10(
+    labels = scales::dollar, 
+    breaks = c(50000, 125000, 300000)
+  )
+
+###Insights from this log transformation
+#There is a slight multimodal effect at the top of the distribution suggesting that houses selling in the $150-170K range are not as common as those selling just below and above that price range.
+#It appears the log transformation helps our variable meet normality assumptions.
+#It appears there is a new potential outlier that we did not see earlier. There is at least one observation where the Sale_Price is near zero. In fact, further investigation identifies two observations, one with a Sale_Price of $12,789 and another at $13,100.
+```
+
+
+```{r}
+par(mfrow = c(1, 2))
+
+# non-log transformed
+qqnorm(ames$Sale_Price, main = "Untransformed\nNormal Q-Q Plot")
+qqline(ames$Sale_Price)
+
+#log transformed
+qqnorm(log(ames$Sale_Price), main = "Log Transformed\nNormal Q-Q Plot")
+qqline(log(ames$Sale_Price))
+```
+
+
+```{r}
+p1 <- ggplot(ames, aes("var", Sale_Price)) +
+  geom_boxplot(outlier.alpha = .5) +
+  scale_y_log10(
+    labels = scales::dollar, 
+    breaks = quantile(ames$Sale_Price)
+  ) 
+
+p2 <- ggplot(ames, aes("var", Sale_Price)) +
+  geom_point() +
+  geom_violin() +
+  scale_y_log10(
+    labels = scales::dollar, 
+    breaks = quantile(ames$Sale_Price)
+  )
+
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+
+#There are two efficient graphs to get an indication of potential outliers in our data. The classic boxplot on the left will identify points beyond the whiskers which are beyond 1.5*IQR from the first and third quantile.
+#This representation illustrates there are several additional observations that we may need to assess as outliers that were not evident in our histogram.
+#Caution: looking at a boxplot we lose insight into the shape of the distribution
+#A violin plot on the right provides us a similar chart as the boxplot but we lose insight into the quantiles of our data and outliers are not plotted (hence the reason I plot geom_point prior to geom_violin). Violin plots will come in handy later when we start to visualize multiple distributions along side each other.
+#use a stem-and-leaf plot to assess the outliers existing beyond the whiskers in our boxplot
+```
+
+
+```{r}
+library(outliers)
+
+outliers <- outliers::scores(log(ames$Sale_Price), type = "iqr", lim = 1.5)
+stem(ames$Sale_Price[outliers])
+
+###Since the decimal point is located 5 digits to the right of the “ ” the last stem of “7” and and first leaf of “5” means an outlier exists at around $750,000.
+#NB: The last stem of “7” and and second leaf of “6” means an outlier exists at around $760,000
+
+#This package gives more insights about the outliers showing that there are 28 lower end outliers ranging from $10,000-$60,000 and 32 upper end outliers ranging from $450,000-$760,000
+#Using geom_rug with geom_density to highlight where clusters, outliers, and gaps of observations are occuring.
+```
+
+
+```{r}
+p1 <- ggplot(ames, aes(Sale_Price)) +
+  geom_density(binwidth= 50000)
+
+p2 <- ggplot(ames, aes(Sale_Price)) +
+  geom_density(binwidth= 50000) +
+  geom_rug()
+
+gridExtra::grid.arrange(p1, p2, nrow = 1)
+#Displaying in density form just means the y-axis is now in a probability scale where the proportion of the given value (or bin of values) to the overall population is displayed. In essence, the y-axis tells you the estimated probability of the x-axis value occurring.
+```
+
+
+```{r}
+## layer the density plot onto the histogram we need to first draw the histogram but tell ggplot to have the y-axis in density form rather than count. You can then add the geom_density function to add the density plot on top.
+ggplot(ames, aes(Sale_Price)) +
+  geom_histogram(aes(y = ..density..),
+                 binwidth = 5000, color = "grey30", fill = "white") +
+  geom_density(alpha = .2, fill = "antiquewhite3")
+plot(ames$Sale_Price, col = rgb(0,0,0, alpha = 0.2)
+```
+
+
+```{r}
+p1 <- ggplot(mtcars, aes(x = mpg)) +
+  geom_dotplot(method = "histodot", binwidth = 1) +
+  ggtitle("dotplot")
+
+p2 <- ggplot(mtcars, aes(x = mpg)) +
+  geom_histogram(binwidth = 1) +
+  ggtitle("histogram")
+
+gridExtra::grid.arrange(p1, p2, nrow = 1)
+##Insights
+#This plot shows a pattern which indicates that groupings of homes with high versus lower sale prices are concentrated together throughout the data set.
+
+#the dotplot below provides more clarity than the histogram for viewing the distribution of mpg in the built-in mtcars dataset with only 32 observations
+#NB histograms being poor for small data sets, dotplots being poor for large data sets, histograms being poor for identifying outlier cut-offs, boxplots being good for outliers but obscuring multimodality, it is important to draw a variety of plots.
+
+```
+
+
+```{r}
+#Categorical Variables
+#Considering the general zoning classification for each property sold in our ames dataset we see that the majority of all properties fall within one category. Here, geom_bar simply counts up all observations for each zoning level.
+ggplot(ames, aes(MS_Zoning)) +
+  geom_bar()
+#Here, MS_Zoning represents a nominal categorical variable where there is no logical ordering of the labels; they simply represent mutually exclusive levels within our variable. To get better clarity of nominal variables we can make some refinements. Here I use dplyr::count to count the observations in each level prior to plotting. In the second plot I use mutate to compute the percent that each level makes up of all observations. I then feed these summarized data into ggplot where I can reorder the MS_Zoning variable from most frequent to least and then apply coord_flip to rotate the plot and make it easier to read the level categories. Also, notice that we now feed an x (MS_Zoning) and y (n in the left plot and pct in the right plot) arguments so I apply geom_col rather than geom_bar.
+```
+
+
+```{r}
+# total count
+p1 <- ames %>% 
+  count(MS_Zoning) %>%
+  ggplot(aes(reorder(MS_Zoning, n), n)) +
+  geom_col() +
+  coord_flip() +
+  ggtitle("Total count")
+
+# percent of whole
+p2 <- ames %>% 
+  count(MS_Zoning) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(reorder(MS_Zoning, pct), pct)) +
+  geom_col() +
+  coord_flip() +
+  ggtitle("Percent of whole")
+
+gridExtra::grid.arrange(p1, p2, nrow = 1)
+#The plots reveal that properties zoned as residential low density make up nearly 80% of all observations . Additionally, properties zoned as aggricultural (A_agr), industrial (I_all), commercial (C_all), and residential high density make up a very small amount of observations. In fact, below we see that these imbalanced category levels each make up less than 1\% of all observations.
+```
+
+
+```{r}
+ames %>%
+    count (MS_Zoning) %>%
+    mutate(pct= n/sum(n)) %>%
+    arrange(pct)
+#The tibble below gives a fair representation of these properties in terms of the count as well as the proportion of the whole spectre that each occupy.
+#This imbalanced nature can cause problems in future analytic models so it may make sense to combine these infrequent levels into an “other” category. An easy way to do that is to use fct_lump.4 Here we use n = 2 to retain the top 2 levels in our variable and condense the remaining into an “other” category.
+
+```
+
+
+```{r}
+ames %>% 
+  mutate(MS_Zoning = fct_lump(MS_Zoning, n = 2)) %>% 
+  count(MS_Zoning) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(reorder(MS_Zoning, pct), pct)) +
+  geom_col() +
+  coord_flip()
+#This combined category still represents less than 10% of all observations.
+
+#Basic bar charts such as these are great when the number of category levels is smaller. However, as the number of levels increase the thick nature of the bar can be distracting. Cleveland dot plots and lollipop charts are useful for assessing the frequency or proportion of many levels while minizing the amount of ink on the graphic.
+
+```
+
+
+```{r}
+#Suppose we choose to assess the frequencies and proportions of home sales by the 38 different neighborhoods a dotplot simplifies the chart
+
+
+ames %>%  
+  count(Neighborhood) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(pct, reorder(Neighborhood, pct))) +
+  geom_point()
+
+```
+
+
+```{r}
+# lollipop chart
+#we use geom_segment to plot the lines and we explicitly state that we want the lines to start at x = 0 and extend to the neighborhood value with xend = pct
+#Additional inclusions to this plot from the previous dot plot are y = neighborhood and yend = neighborhood to tell R the lines are horizontally attached to each neighborhood.
+
+ames %>%  
+  count(Neighborhood) %>%
+  mutate(pct = n / sum(n)) %>%
+  ggplot(aes(pct, reorder(Neighborhood, pct))) +
+  geom_point() +
+  geom_segment(aes(x = 0, xend = pct, y = Neighborhood, yend = Neighborhood), size = .15)
+
+```
+
+
+```{r}
+#Our ames data categorizes the quality of kitchens into five buckets and these buckets have a natural order that is not captured with a regular bar chart. This is an issue of categorization that needs to be sorted
+ggplot(ames, aes(Kitchen_Qual)) + 
+  geom_bar()
+
+```
+
+
+```{r}
+#Instead of ordering the kitchen bars by frequency it may be important to order the bars by the natural order of the quality lables: Poor, Fair, Typical, Good, Excellent.
+#fct_relevel makes it easy to see exactly where most kitchens fall
+
+ames %>%
+  mutate(Kitchen_Qual = fct_relevel(Kitchen_Qual, "Poor", "Fair", "Typical", "Good")) %>%
+  ggplot(aes(Kitchen_Qual)) + 
+  geom_bar()
+#This representation show that most kitchens fall between average and slghtly above the average inthe continuum of measurement.
+
+
+```
+
+
+```{r}
+#This data identifies the month each home was sold but uses integer values to represent the months. In this case we do not need to reorder our factor levels but we should ensure we visualize these as discrete factor levels
+#Using factor(Mo_Sold) within ggplot
+
+p1 <- ggplot(ames, aes(Mo_Sold)) + 
+  geom_bar()
+
+p2 <- ggplot(ames, aes(factor(Mo_Sold))) + 
+  geom_bar()
+
+gridExtra::grid.arrange(p1, p2, nrow = 2)
+#that the home sale counts are appropriately bucketed into each month.
+#This barplot is very important in formulating marketting strategies given the modelled sales trend
+
+```
+```{r}
+#Checking on missing data
+
+MASS::survey %>%
+  select(Sex, Exer, Smoke, Fold, Clap, M.I) %>%
+  gather(var, value, Sex:M.I) %>%
+  ggplot(aes(value)) +
+  geom_bar() +
+  facet_wrap(~ var, scales = "free")
+#There are no missing data
+
+```
+
+```{r}
+p1 <- ggplot(ames, aes(x = Gr_Liv_Area, y = Sale_Price)) +
+  geom_point(alpha = .3) +
+  geom_smooth(method = "lm", se = FALSE, color = "red", lty = "dashed") +
+  geom_smooth(se = FALSE, lty = "dashed") +
+  ggtitle("Non-transformed variables")
+  
+
+p2 <- ggplot(ames, aes(x = Gr_Liv_Area, y = Sale_Price)) +
+  geom_point(alpha = .3) +
+  geom_smooth(method = "lm", se = FALSE, color = "red", lty = "dashed") +
+  geom_smooth(se = FALSE, lty = "dashed") +
+  scale_x_log10() +
+  scale_y_log10() +
+  ggtitle("log-transformed variables")
+
+gridExtra::grid.arrange(p1, p2, nrow = 1)
+
+#The funneling in the left scatter plot inidcates heteroskedacity which may negatively impact future modelling
+#The right plot shows that transforming our variables makes our variability across the plot more constant
+#It is good to note that  for the majority of the plot the relationship is now linear with the exception of the two ends where we see the non-linear line being pulled down. This suggests that there are some influential observations with low and high square footage that are pulling the expected sale price down.
+
+
+```
+```{r}
+#identifying gaps in our data where no observations exist.
+
+p1 <- ggplot(ames, aes(x = Garage_Area, y = Sale_Price)) + 
+  geom_point(alpha = .2)
+
+p2 <- ggplot(ames, aes(x = Garage_Area, y = Sale_Price)) + 
+  geom_point(alpha = .2) + 
+  geom_density2d()
+
+p3 <- ggplot(ames, aes(x = Garage_Area, y = Sale_Price)) + 
+  geom_hex(bins = 50, show.legend = FALSE)
+
+gridExtra::grid.arrange(p1, p2, p3, nrow = 1)
+
+```
+```{r}
+#Adding some variation to the data and using  boxplots and violin plots to compare the distributions of Sale_Price to Bedroom_AbvGr.
+
+p1 <- ggplot(ames, aes(x = factor(Bedroom_AbvGr), y = Sale_Price)) +
+  geom_point(alpha = .2)
+
+p2 <- ggplot(ames, aes(x = factor(Bedroom_AbvGr), y = Sale_Price)) +
+  geom_jitter(alpha = .2, width = .2)
+
+p3 <- ggplot(ames, aes(x = factor(Bedroom_AbvGr), y = Sale_Price)) +
+  geom_boxplot()
+
+p4 <- ggplot(ames, aes(x = factor(Bedroom_AbvGr), y = Sale_Price)) +
+  geom_violin()
+
+gridExtra::grid.arrange(p1, p2, p3, p4, nrow = 2)
+```
+
+
+```{r}
+#assess the Sale_Price of homes across the overall quality of homes.
+
+p1 <- ggplot(ames, aes(x = Sale_Price, color = Overall_Qual)) +
+  geom_freqpoly() +
+  scale_x_log10(breaks = c(50, 150, 400, 750) * 1000, labels = scales::dollar)
+  
+p2 <- ggplot(ames, aes(x = Sale_Price, color = Overall_Qual, fill = Overall_Qual)) +
+  geom_density(alpha = .15) +
+  scale_x_log10(breaks = c(50, 150, 400, 750) * 1000, labels = scales::dollar)
+
+gridExtra::grid.arrange(p1, p2, nrow = 2)
+#Given that there are many levels in a categorical variable, overlaid plots become difficult to decipher. Rather than overlay plots, we can also use small multiples to compare the distribution of a continuous variable.
+
+```
+```{r}
+library(ggridges)
+ggplot(ames, aes(x = Sale_Price, y = Overall_Qual)) + 
+  ggridges::geom_density_ridges() +
+  scale_x_continuous(labels = scales::dollar)
+```
+
+
+```{r}
+#assess the quality of kitchens for homes that sold above and below the mean sales price.
+
+ames %>%
+  mutate(
+    Above_Avg = ifelse(Sale_Price > mean(Sale_Price), "Above", "Below"),
+    Kitchen_Qual = fct_relevel(Kitchen_Qual, "Poor", "Fair", "Typical", "Good")
+    ) %>%
+  ggplot(aes(Kitchen_Qual)) + 
+  geom_bar() +
+  facet_wrap(~ Above_Avg) +
+  theme_bw()
+
+```
+```{r}
+#creating small multiples across two additional dimension
+
+ ames %>%
+    mutate(
+        Above_Average = ifelse(Sale_Price > mean(Sales_Price), "Above", "Below"), 
+        Kitchen_Qual= fct_relevel(Kitchen_Qual, "Poor",  "Fair","Typical", "Good")
+    ) %>%
+    group_by(Neighborhood, Above_Average, Kitchen_Qual) %>% 
+    tally()%>%
+    mutate(pct= n/sum(n)) %>%
+    ggplot(aes(Kitchen_Qual, pct))+
+    geom_col()+
+    facet_grid(Neighborhood ~ Above_Average) +
+    theme(strip.text.y = element_text(angle = 0, hjust = 0.5))
+    
+    
+```
+```{r}
+#Multivariate Relationships within the model
+
+
+#Comparing the sales price to above ground square footage of homes with and without central air conditioning
+
+ggplot(ames, aes(x = Gr_Liv_Area, y = Sale_Price, color = Central_Air, shape = Central_Air)) +
+  geom_point(alpha = .5) +
+  scale_x_log10() +
+  scale_y_log10()
+
+#INSGHT: There are far more homes with central air and that those homes without central air tend to have less square footage and sell for lower sales prices.
+#compare the relationship between sales price and above ground square footage and we assess how this relationship may differ across the different house styles (i.e. one story, two story, etc.).
+```
+
+
+
+```{r}
+ggplot(ames, aes(x = Gr_Liv_Area, y = Sale_Price)) +
+  geom_point(alpha = .5) +
+  scale_x_log10() +
+  scale_y_log10(labels = scales::dollar) +
+  facet_wrap(~ House_Style, nrow = 2) +
+  theme_bw()
+#IN this case, we assess the relationship between sales price and above ground square footage for homes with and without central air conditioning and across the different housing styles.
+```
+```{r}
+#Given each house style  and central air category we can see where the values are clustered and how the linear relationship behaves. 
+
+ggplot(ames, aes(x = Gr_Liv_Area, y = Sale_Price, color = Central_Air, shape = Central_Air)) +
+  geom_point(alpha = .3) +
+  geom_density2d(alpha = .5) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_x_log10() +
+  scale_y_log10(labels = scales::dollar) +
+  facet_wrap(~ House_Style, nrow = 2) +
+  ggtitle("Sale Price vs. Above Ground Sq.Ft",
+          subtitle = "How does central air and house style influence this relationship?") +
+  theme_bw()
+#For all home styles, those houses with central air have a higher selling price coupled with a steeper slope comparative to those without central air. Also, those plots without density markings and linear lines for the no central air category (red) tell us that there are no more than one observation in these groups; so this identifies gaps across multivariate categories of interest
+```
+```{r}
+#Parallel coordinate plots (PCP)
+#It is important in visualizing continuous variables across multiple variables
+
+#Creating a multivariate profile
+variables <- c("Sale_Price", "Year_Built", "Year_Remod_Add", "Overall_Qual")
+
+ames %>%
+  select(variables) %>%
+  ggparcoord(alpha = .05, scale = "center")
+#INSIGHTS
+#The observations with higher sales prices tend to be built in more recent years, be remodeled in recent years and be categorized in the top half of the overall quality measures.
+#In contracts, homes with lower sales prices tend to be more out-dated (based on older built and remodel dates) and have lower quality ratings
+#There also are some homes with exceptionally old build dates that have much newer remodel dates but still have just average quality ratings.
+#Is the sale price above average?2                                          
+
+```
+```{r}
+#This can be ascertained adding a new variable then tell ggparcood to group by this new variable
+
+ames %>%
+  select(variables) %>%
+  mutate(Above_Avg = Sale_Price > mean(Sale_Price)) %>%
+  ggparcoord(
+    alpha = .05,
+    scale = "center",
+    columns = 1:4,
+    groupColumn = "Above_Avg"
+    )
+#It is clear that that above average sale prices are related to much newer homes.
+```
+
+
+```{r}
+#Mosaic Plots
+
+ames2 <- ames %>%
+  mutate(
+    Above_Avg = Sale_Price > mean(Sale_Price),
+    Garage_Type = abbreviate(Garage_Type),
+    Garage_Qual = abbreviate(Garage_Qual)
+         )
+par(mfrow = c(1, 2))
+mosaicplot(Above_Avg ~ Garage_Type, data = ames2, las = 1)
+mosaicplot(Above_Avg ~ Garage_Type + Garage_Cars, data = ames2, las = 1)
+
+#Using a treemap in visualizing the above right mosaic plot that illustrates the number of homes sold above and below average sales price with different garage characteristics
+
+```
+```{r}
+ames %>% 
+  mutate(Above_Below = ifelse(Sale_Price > mean(Sale_Price), "Above Avg", "Below Avg")) %>%
+  count(Garage_Type, Garage_Cars, Above_Below) %>%
+  treemap(
+    index = c("Above_Below", "Garage_Type", "Garage_Cars"),
+    vSize = "n"
+  )
+
+#INSIGHT
+#houses with above average prices tend to have attached 2 and 3-car garages. Houses sold below average price have more attached 1-car garages and also have far more detached garages
+
+
+```
+```{r}
+#Heatmaps
+
+ames %>%
+  select_if(is.numeric) %>%
+  cor() %>%
+  heatmap()
+
+#INSIGHT
+
+#Looking at Sale_Price (3rd row from top) it's evident that the smaller values are clustered to the left of the plot suggestion weaker linear relationships with variables such as BsmtFin_Sf_1, Bsmt_Unf_SF, Longitude, Enclosed_Porch, etc. The larger correlations values for Sale_Price align with variables to the right of the plot such as Garage_Cars, Garage_Area, First_Flr_SF, etc.
+#While dealing with smaller datasets, its wiser to create matrix plots than use heatmaps in compating relationships across all variables
+#Comparing the Sale_Price and all variables that contain “sf” (all square footage variables)
+
+```
+```{r}
+#We scale all variables, and then visualize the scatter plot and correlation values with GGally::ggpairs.
+
+ames %>%
+  select(Sale_Price, contains("sf")) %>%
+  map_df(scale) %>%
+  ggpairs()
+```
+
+
+```{r}
+#DATA QUALITY
+
+sum(is.na(AmesHousing::ames_raw))
+#INSHT; While the processed (cleaned dataset) indicated that there was no missin value, the raw data shows that there are about 13997 missing values
+heatmap(1 * is.na(AmesHousing::ames_raw), Rowv = NA, Colv = NA)
+
+#missing values appear to occur across all garage variables for the same observations.
+#Some deeper insights indicate that  Garage Cars and Garage Area all contain the value 0 for every observation where the other Garage_xx variables have missing values. This is because in the raw Ames housing data set, they did not have an option to identify houses with no garages. Therefore, all houses with no garage were identified by including nothing.
+
+```
+```{r}
+#We can then create a new categorical level (“None”) for these garage variables.
+
+AmesHousing::ames_raw %>% 
+  filter(is.na(`Garage Type`)) %>% 
+  select(contains("garage"))
+
+```
+
+
